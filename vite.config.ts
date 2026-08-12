@@ -24,7 +24,7 @@ export default defineConfig(() => {
           manualChunks(id: string) {
             if (id.includes('node_modules')) {
               if (id.includes('react') || id.includes('react-dom')) return 'vendor-react';
-              if (id.includes('lucide-react') || id.includes('motion') || id.includes('@supabase') || id.includes('supabase-js')) return 'vendor-ui';
+              if (id.includes('lucide-react') || id.includes('motion') || id.includes('framer-motion') || id.includes('@supabase') || id.includes('supabase-js')) return 'vendor-ui';
               return 'vendor';
             }
           }

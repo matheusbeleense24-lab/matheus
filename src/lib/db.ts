@@ -354,6 +354,7 @@ export const db = {
     const normalizedSlug = normalizeSlug(String(slug || ''));
     if (!normalizedSlug) return null;
 
+    // 1. Try exact slug match in Supabase
     try {
       const { data, error } = await supabase
         .from('lojas')
@@ -361,61 +362,27 @@ export const db = {
         .eq('slug', normalizedSlug)
         .maybeSingle();
       if (data) {
-        return {
-          id: data.id,
-          name: data.nome,
-          slug: data.slug,
-          slogan: data.slogan,
-          description: data.descricao || data.description || data.slogan || '',
-          logo_url: data.logo_url,
-          banner_url: data.banner_url,
-          banner_promo_url: data.banner_promo_url,
-          phone: data.telefone,
-          whatsapp: data.whatsapp,
-          instagram: data.instagram,
-          cep: data.cep,
-          rua: data.rua,
-          numero: data.numero,
-          bairro: data.bairro,
-          cidade: data.cidade,
-          estado: data.estado,
-          complemento: data.complemento,
-          referencia: data.referencia,
-          mensagem_topo: data.mensagem_topo,
-          mensagem_rodape: data.mensagem_rodape,
-          cor_primaria: data.cor_primaria,
-          cor_secundaria: data.cor_secundaria,
-          aberto: data.aberto,
-          tempo_entrega_min: data.tempo_entrega_min,
-          tempo_entrega_max: data.tempo_entrega_max,
-          taxa_entrega_padrao: Number(data.taxa_entrega_padrao || 0),
-          pedido_minimo: Number(data.pedido_minimo || 0),
-          frete_gratis_acima: Number(data.frete_gratis_acima || 0),
-          nicho: data.nicho,
-          vencimento: data.vencimento,
-          pausado: data.pausado === true,
-          bloqueado: data.bloqueado === true,
-          pago: data.pago !== false,
-          owner_name: data.owner_name,
-          horarios: data.horarios || {
-            seg: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            ter: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            qua: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            qui: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            sex: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            sab: { abertura: '18:00', fechamento: '23:59', fechado: false },
-            dom: { abertura: '18:00', fechamento: '23:59', fechado: false }
-          },
-          metodos_pagamento: data.metodos_pagamento || {
-            pix: true,
-            dinheiro: true,
-            cartao: true,
-            vr: false
-          }
-        } as any;
+        return this.mapStoreFromSupabase(data);
       }
     } catch {}
 
+    // 2. Try fuzzy search by name in Supabase (fetch all lojas and search locally)
+    try {
+      const { data: allStores } = await supabase
+        .from('lojas')
+        .select('*');
+      if (allStores && allStores.length > 0) {
+        const fuzzyMatch = allStores.find((s: any) => {
+          const nameCandidate = normalizeSlug(String(s.nome || s.name || ''));
+          return nameCandidate === normalizedSlug;
+        });
+        if (fuzzyMatch) {
+          return this.mapStoreFromSupabase(fuzzyMatch);
+        }
+      }
+    } catch {}
+
+    // 3. Try localStorage fallback
     const localStores = getLocal<Store[]>('stores', INITIAL_MOCK_STORES);
     const matched = localStores.find((s) => {
       const slugCandidate = normalizeSlug(String(s.slug || ''));
@@ -428,6 +395,61 @@ export const db = {
     this.initializeLocalBackup();
     const stores = getLocal<Store[]>('stores', INITIAL_MOCK_STORES);
     return stores.find((s) => normalizeSlug(String(s.slug || '')) === normalizedSlug) || null;
+  },
+
+  mapStoreFromSupabase(data: any): Store {
+    return {
+      id: data.id,
+      name: data.nome,
+      slug: data.slug,
+      slogan: data.slogan,
+      description: data.descricao || data.description || data.slogan || '',
+      logo_url: data.logo_url,
+      banner_url: data.banner_url,
+      banner_promo_url: data.banner_promo_url,
+      phone: data.telefone,
+      whatsapp: data.whatsapp,
+      instagram: data.instagram,
+      cep: data.cep,
+      rua: data.rua,
+      numero: data.numero,
+      bairro: data.bairro,
+      cidade: data.cidade,
+      estado: data.estado,
+      complemento: data.complemento,
+      referencia: data.referencia,
+      mensagem_topo: data.mensagem_topo,
+      mensagem_rodape: data.mensagem_rodape,
+      cor_primaria: data.cor_primaria,
+      cor_secundaria: data.cor_secundaria,
+      aberto: data.aberto,
+      tempo_entrega_min: data.tempo_entrega_min,
+      tempo_entrega_max: data.tempo_entrega_max,
+      taxa_entrega_padrao: Number(data.taxa_entrega_padrao || 0),
+      pedido_minimo: Number(data.pedido_minimo || 0),
+      frete_gratis_acima: Number(data.frete_gratis_acima || 0),
+      nicho: data.nicho,
+      vencimento: data.vencimento,
+      pausado: data.pausado === true,
+      bloqueado: data.bloqueado === true,
+      pago: data.pago !== false,
+      owner_name: data.owner_name,
+      horarios: data.horarios || {
+        seg: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        ter: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        qua: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        qui: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        sex: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        sab: { abertura: '18:00', fechamento: '23:59', fechado: false },
+        dom: { abertura: '18:00', fechamento: '23:59', fechado: false }
+      },
+      metodos_pagamento: data.metodos_pagamento || {
+        pix: true,
+        dinheiro: true,
+        cartao: true,
+        vr: false
+      }
+    } as any;
   },
 
   async saveStore(store: Store): Promise<Store> {
