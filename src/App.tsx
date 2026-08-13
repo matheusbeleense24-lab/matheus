@@ -7,76 +7,99 @@ import React, { useState, useEffect } from 'react';
 import CardapioPublico from './components/CardapioPublico';
 import PainelMaster from './components/PainelMaster';
 import PainelAdmin from './components/PainelAdmin';
+import Landing from './components/Landing';
+import ErrorBoundary from './components/ErrorBoundary';
 
 interface RouteState {
   view: 'public' | 'master' | 'admin';
   slug: string;
 }
 
+function decodeRouteValue(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function parseRouteValue(currentLocation: Location): RouteState {
+  const rawHash = decodeRouteValue(currentLocation.hash.replace(/^#\/?/, '').trim()).toLowerCase();
+  const rawPath = decodeRouteValue(currentLocation.pathname.replace(/^\//, '').trim()).toLowerCase();
+
+  console.log('📍 Route parsing:', { hash: rawHash, path: rawPath });
+
+  if (rawHash === 'admin-master' || rawPath === 'admin-master') {
+    console.log('✅ Master route detected');
+    return { view: 'master', slug: '' };
+  }
+
+  if (rawHash === 'admin' || rawPath === 'admin') {
+    console.log('✅ Admin route detected');
+    return { view: 'admin', slug: '' };
+  }
+
+  if (rawHash.startsWith('admin/')) {
+    const adminSlug = rawHash.replace(/^admin\//, '').trim();
+    console.log('✅ Admin route detected with store slug:', adminSlug);
+    return { view: 'admin', slug: adminSlug };
+  }
+
+  if (rawHash && rawHash !== '') {
+    console.log('✅ Public route (hash) detected:', rawHash);
+    return { view: 'public', slug: rawHash };
+  }
+
+  if (rawPath && rawPath !== '') {
+    return { view: 'public', slug: rawPath };
+  }
+
+  return { view: 'public', slug: '' };
+}
+
 export default function App() {
-  const [route, setRoute] = useState<RouteState>({ view: 'public', slug: '' });
+  const [route, setRoute] = useState<RouteState>(() => {
+    if (typeof window === 'undefined') {
+      return { view: 'public', slug: '' };
+    }
+    return parseRouteValue(window.location);
+  });
 
   useEffect(() => {
-    function decodeRouteValue(value: string) {
-      try {
-        return decodeURIComponent(value);
-      } catch {
-        return value;
-      }
-    }
+    console.log('🚀 App starting...');
 
-    function parseRoute() {
-      const rawHash = decodeRouteValue(window.location.hash.replace(/^#\/?/, '').trim()).toLowerCase();
-      const rawPath = decodeRouteValue(window.location.pathname.replace(/^\//, '').trim()).toLowerCase();
+    const handleRouteChange = () => {
+      setRoute(parseRouteValue(window.location));
+    };
 
-      // Check master route
-      if (rawHash === 'admin-master' || rawPath === 'admin-master') {
-        setRoute({ view: 'master', slug: '' });
-        return;
-      }
+    handleRouteChange();
 
-      // Check admin store route
-      if (rawHash === 'admin' || rawPath === 'admin' || rawHash.startsWith('admin/')) {
-        setRoute({ view: 'admin', slug: '' });
-        return;
-      }
-
-      // Parse Hash Route first (highly compatible with iframe previews)
-      if (rawHash && rawHash !== '') {
-        setRoute({ view: 'public', slug: rawHash });
-        return;
-      }
-
-      // Fallback to pathname route
-      if (rawPath && rawPath !== '') {
-        setRoute({ view: 'public', slug: rawPath });
-        return;
-      }
-
-      // Default Home: keep empty slug instead of forcing Burger do Gordo
-      setRoute({ view: 'public', slug: '' });
-    }
-
-    parseRoute();
-
-    window.addEventListener('hashchange', parseRoute);
-    window.addEventListener('popstate', parseRoute);
+    window.addEventListener('hashchange', handleRouteChange);
+    window.addEventListener('popstate', handleRouteChange);
 
     return () => {
-      window.removeEventListener('hashchange', parseRoute);
-      window.removeEventListener('popstate', parseRoute);
+      window.removeEventListener('hashchange', handleRouteChange);
+      window.removeEventListener('popstate', handleRouteChange);
     };
   }, []);
 
-  if (route.view === 'master') {
-    return <PainelMaster />;
-  }
+  const content = (() => {
+    if (route.view === 'master') {
+      return <PainelMaster />;
+    }
 
-  if (route.view === 'admin') {
-    return <PainelAdmin />;
-  }
+    if (route.view === 'admin') {
+      return <PainelAdmin storeSlug={route.slug} />;
+    }
 
-  return <CardapioPublico storeSlug={route.slug} />;
+    if (route.slug === '') {
+      return <Landing />;
+    }
+
+    return <CardapioPublico storeSlug={route.slug} />;
+  })();
+
+  return <ErrorBoundary>{content}</ErrorBoundary>;
 }
 
 

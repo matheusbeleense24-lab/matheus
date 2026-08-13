@@ -532,7 +532,21 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
       try {
         setLoading(true);
         // Load target store config from Supabase (or localStorage fallback)
-        const storeData = await db.getStoreBySlug(storeSlug);
+        let storeData = await db.getStoreBySlug(storeSlug);
+        
+        // If still not found, try to sync from localStorage and retry
+        if (!storeData) {
+          const localStores = JSON.parse(localStorage.getItem('pedifacil_db_stores') || '[]');
+          const normalizedTarget = storeSlug.trim().toLowerCase();
+          const localMatch = localStores.find((s: any) => {
+            const sSlug = (s.slug || s.nome || s.name || '').toString().toLowerCase().trim();
+            return sSlug === normalizedTarget;
+          });
+          if (localMatch) {
+            storeData = localMatch;
+          }
+        }
+        
         if (storeData) {
           const fallbackName = storeData.name || storeData.nome || storeData.slug || storeData.cidade || 'Loja';
           storeData.name = fallbackName;
@@ -677,8 +691,10 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
     try {
       bc = new BroadcastChannel('pedifacil_store_update');
       bc.onmessage = (event) => {
-        if (event.data?.type === 'store_config_updated') {
-          const { horarios, metodos_pagamento, storeData } = event.data;
+        const { type, updateType, storeData, horarios, metodos_pagamento } = event.data;
+        
+        if (type === 'store_config_updated') {
+          // Atualização de configurações da loja
           setStore(prev => {
             if (!prev) return prev;
             return {
@@ -688,6 +704,31 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
               metodos_pagamento: metodos_pagamento || prev.metodos_pagamento
             };
           });
+        } else if (type === 'cardapio_data_changed') {
+          // Mudança de produtos ou categorias - refrescar dados
+          console.log('📡 Recebido evento de mudança no cardápio:', updateType);
+          if (updateType === 'products' || updateType === 'full') {
+            // Refrescar produtos
+            (async () => {
+              try {
+                const updatedProds = await db.getProducts(store?.id || '');
+                setProducts(updatedProds);
+              } catch (e) {
+                console.warn('Erro ao atualizar produtos após BroadcastChannel:', e);
+              }
+            })();
+          }
+          if (updateType === 'categories' || updateType === 'full') {
+            // Refrescar categorias
+            (async () => {
+              try {
+                const updatedCats = await db.getCategories(store?.id || '');
+                setCategories(updatedCats);
+              } catch (e) {
+                console.warn('Erro ao atualizar categorias após BroadcastChannel:', e);
+              }
+            })();
+          }
         }
       };
     } catch (e) {
@@ -707,6 +748,36 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
     if (!store?.id) return;
 
     console.log('⚡ Inicializando canais Supabase Realtime para o Cardápio da loja:', store.nome);
+
+    // Debounce timers para evitar múltiplas atualizações em sequência rápida
+    let catUpdateTimeout: NodeJS.Timeout;
+    let prodUpdateTimeout: NodeJS.Timeout;
+    
+    const updateCategoriesDebounced = async () => {
+      clearTimeout(catUpdateTimeout);
+      catUpdateTimeout = setTimeout(async () => {
+        try {
+          console.log('⏱️ Atualizando categorias após debounce...');
+          const updatedCats = await db.getCategories(store.id);
+          setCategories(updatedCats);
+        } catch (e) {
+          console.error('Erro ao recarregar categorias em tempo real:', e);
+        }
+      }, 500); // Wait 500ms to batch updates
+    };
+
+    const updateProductsDebounced = async () => {
+      clearTimeout(prodUpdateTimeout);
+      prodUpdateTimeout = setTimeout(async () => {
+        try {
+          console.log('⏱️ Atualizando produtos após debounce...');
+          const updatedProds = await db.getProducts(store.id);
+          setProducts(updatedProds);
+        } catch (e) {
+          console.error('Erro ao recarregar produtos em tempo real:', e);
+        }
+      }, 500); // Wait 500ms to batch updates
+    };
 
     // 1. Canal da Loja (Status Aberto/Fechado, Dados Gerais)
     const storeSub = supabase
@@ -752,7 +823,14 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
           });
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime Store subscribed');
+        } else if (status === 'CLOSED') {
+          console.log('❌ Realtime Store disconnected, will retry via polling');
+        }
+        if (err) console.error('Realtime Store error:', err);
+      });
 
     // 2. Canal de Categorias (Atualizar o menu se mudar)
     const catSub = supabase
@@ -767,15 +845,17 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
         },
         async (payload) => {
           console.log('📁 Categorias atualizadas em tempo real via Supabase Realtime!');
-          try {
-            const updatedCats = await db.getCategories(store.id);
-            setCategories(updatedCats);
-          } catch (e) {
-            console.error('Erro ao recarregar categorias em tempo real:', e);
-          }
+          updateCategoriesDebounced();
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime Categories subscribed');
+        } else if (status === 'CLOSED') {
+          console.log('❌ Realtime Categories disconnected, will retry via polling');
+        }
+        if (err) console.error('Realtime Categories error:', err);
+      });
 
     // 3. Canal de Produtos (Preço, disponibilidade, etc.)
     const prodSub = supabase
@@ -790,15 +870,17 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
         },
         async (payload) => {
           console.log('🍔 Produtos atualizados em tempo real via Supabase Realtime!');
-          try {
-            const updatedProds = await db.getProducts(store.id);
-            setProducts(updatedProds);
-          } catch (e) {
-            console.error('Erro ao recarregar produtos em tempo real:', e);
-          }
+          updateProductsDebounced();
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime Products subscribed');
+        } else if (status === 'CLOSED') {
+          console.log('❌ Realtime Products disconnected, will retry via polling');
+        }
+        if (err) console.error('Realtime Products error:', err);
+      });
 
     // 4. Canal de Pedidos (Para que o cliente acompanhe seu pedido em tempo real!)
     const orderSub = supabase
@@ -839,9 +921,18 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime Orders subscribed');
+        } else if (status === 'CLOSED') {
+          console.log('❌ Realtime Orders disconnected, will retry via polling');
+        }
+        if (err) console.error('Realtime Orders error:', err);
+      });
 
     return () => {
+      clearTimeout(catUpdateTimeout);
+      clearTimeout(prodUpdateTimeout);
       supabase.removeChannel(storeSub);
       supabase.removeChannel(catSub);
       supabase.removeChannel(prodSub);
@@ -850,9 +941,12 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
   }, [store?.id, customerInfo.whatsapp]);
 
   // ♻️ POLLING FALLBACK - Garante sincronização mesmo quando o Realtime falha (celular, rede instável)
-  // Busca configurações atualizadas da loja a cada 30 segundos diretamente do Supabase
+  // Busca configurações atualizadas da loja: mais rápido quando em foco, mais lento em background
   useEffect(() => {
     if (!store?.id) return;
+
+    let pollingInterval: NodeJS.Timeout;
+    let aggressivePolling = false; // Flag para saber se estamos em foco
 
     const syncFromSupabase = async () => {
       try {
@@ -900,9 +994,44 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
       }
     };
 
+    // Sincronizar imediatamente ao montar
     syncFromSupabase();
-    const pollingInterval = setInterval(syncFromSupabase, 30000); // A cada 30 segundos
-    return () => clearInterval(pollingInterval);
+
+    // Função para atualizar intervalo de polling baseado em visibilidade
+    const updatePollingSpeed = () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+      
+      // Se página está visível, polling a cada 8 segundos (mais rápido para celular)
+      // Se página está oculta, polling a cada 60 segundos
+      const interval = document.hidden ? 60000 : 8000;
+      aggressivePolling = !document.hidden;
+      
+      pollingInterval = setInterval(syncFromSupabase, interval);
+    };
+
+    // Escutar mudanças de visibilidade da página
+    document.addEventListener('visibilitychange', updatePollingSpeed);
+    
+    // Escutar eventos de storage (quando outro tab/janela faz mudanças)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === `pedifacil_local_categories_${store.id}` || 
+          e.key === `pedifacil_local_products_${store.id}` ||
+          e.key === 'pedifacil_db_stores' ||
+          e.key === `pedifacil_store_extras_${store.id}`) {
+        console.log('📡 Sincronização detectada via localStorage event');
+        syncFromSupabase();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // Iniciar polling com velocidade apropriada
+    updatePollingSpeed();
+
+    return () => {
+      clearInterval(pollingInterval);
+      document.removeEventListener('visibilitychange', updatePollingSpeed);
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, [store?.id]);
 
   // Urgent Countdown Tick
@@ -1471,8 +1600,11 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
       <div className="flex flex-col items-center justify-center min-h-[400px] text-center p-8 bg-white max-w-md mx-auto rounded-3xl border border-zinc-100 mt-20">
         <span className="text-5xl mb-4">😕</span>
         <h2 className="text-xl font-bold text-zinc-900 mb-2">Estabelecimento Não Encontrado</h2>
-        <p className="text-zinc-500 text-sm mb-6">Infelizmente não encontramos nenhuma lanchonete ou barbearia associada à URL "{storeSlug}".</p>
-        <p className="text-xs text-zinc-400">Verifique os links criados no Painel Master.</p>
+        <p className="text-zinc-500 text-sm mb-4">Infelizmente não encontramos nenhuma lanchonete ou barbearia associada à URL <strong>"{storeSlug}"</strong>.</p>
+        <p className="text-xs text-zinc-400 mb-6">Verifique se o link está correto ou crie/ative a loja no Painel Master.</p>
+        <a href="#admin-master" className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 transition">
+          Ir para Painel Master
+        </a>
       </div>
     );
   }
@@ -3424,10 +3556,7 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
                         <form
                           onSubmit={(e) => {
                             e.preventDefault();
-                            if (!customerInfo.nome.trim()) {
-                              showToast('Nome é obrigatório.', 'error');
-                              return;
-                            }
+                            // Validação mais flexível - apenas bairro e endereço são obrigatórios
                             if (!customerInfo.whatsapp.trim()) {
                               showToast('WhatsApp é obrigatório.', 'error');
                               return;
@@ -3469,14 +3598,13 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
                           }}
                           className="space-y-5 text-left"
                         >
-                          {/* SEU NOME * */}
+                          {/* SEU NOME */}
                           <div>
                             <label className="text-[10px] font-extrabold uppercase tracking-widest text-[#9E9E9E] dark:text-[#A0A0A0] block mb-1.5 font-sans">
-                              Seu Nome *
+                              Seu Nome (Opcional)
                             </label>
                             <input
                               type="text"
-                              required
                               placeholder="Ex: João da Silva"
                               value={customerInfo.nome}
                               onChange={(e) => setCustomerInfo(prev => ({ ...prev, nome: e.target.value }))}
@@ -4447,9 +4575,8 @@ export default function CardapioPublico({ storeSlug }: PublicMenuProps) {
                 
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[10px] font-extrabold uppercase tracking-widest text-zinc-400 block mb-1.5">Seu Nome *</label>
+                    <label className="text-[10px] font-extrabold uppercase tracking-widest text-zinc-400 block mb-1.5">Seu Nome (Opcional)</label>
                     <input
-                      required
                       type="text"
                       placeholder="Ex: João da Silva"
                       value={customerInfo.nome}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { supabase } from '../lib/supabaseClient';
 import { Store } from '../types';
 import { 
@@ -955,15 +955,18 @@ export default function PainelMaster() {
                       <span className="text-zinc-300">•</span>
                       <button 
                         onClick={() => {
+                          const targetSlug = getNormalizedSlug(store);
                           const loginSession = {
                             id: store.id,
                             nome: store.nome || store.name,
-                            slug: store.slug,
+                            slug: targetSlug,
                             owner_email: store.owner_email,
                             owner_password: store.owner_password
                           };
+                          const sessionKey = `pedifacil_store_admin_logged_in_${targetSlug}`;
+                          localStorage.setItem(sessionKey, JSON.stringify(loginSession));
                           localStorage.setItem('pedifacil_store_admin_logged_in', JSON.stringify(loginSession));
-                          window.open(`${window.location.origin}/#admin`, '_blank');
+                          window.open(`${window.location.origin}/#admin/${encodeURIComponent(targetSlug)}`, '_blank');
                           showToast(`Abrindo Painel do Lojista para ${store.nome || store.name || 'sua loja'}! 🚀`, 'success');
                         }}
                         className="text-sky-600 hover:text-sky-700 hover:underline flex items-center gap-1 cursor-pointer bg-transparent border-none p-0 font-bold"
@@ -1203,7 +1206,7 @@ export default function PainelMaster() {
                       type="checkbox"
                       checked={formPaid}
                       onChange={(e) => setFormPaid(e.target.checked)}
-                      className="rounded border-zinc-300 text-zinc-900 bg-zinc-50 focus:ring-0 w-4 h-4"
+                      className="rounded border-zinc-300 text-zinc-900 bg-zinc-50 focus:ring-0 w-4 h-4 accent-zinc-900"
                     />
                     <div className="text-xs">
                       <p className="font-extrabold text-zinc-800">Mensalidade Paga?</p>
@@ -1216,7 +1219,7 @@ export default function PainelMaster() {
                       type="checkbox"
                       checked={formPaused}
                       onChange={(e) => setFormPaused(e.target.checked)}
-                      className="rounded border-zinc-300 text-zinc-900 bg-zinc-50 focus:ring-0 w-4 h-4"
+                      className="rounded border-zinc-300 text-zinc-900 bg-zinc-50 focus:ring-0 w-4 h-4 accent-zinc-900"
                     />
                     <div className="text-xs">
                       <p className="font-extrabold text-zinc-800">Pausado?</p>
@@ -1229,7 +1232,7 @@ export default function PainelMaster() {
                       type="checkbox"
                       checked={formBlocked}
                       onChange={(e) => setFormBlocked(e.target.checked)}
-                      className="rounded border-zinc-300 text-rose-600 bg-zinc-50 focus:ring-0 w-4 h-4"
+                      className="rounded border-zinc-300 text-rose-600 bg-zinc-50 focus:ring-0 w-4 h-4 accent-rose-600"
                     />
                     <div className="text-xs">
                       <p className="font-extrabold text-rose-600">Bloqueado?</p>
